@@ -1,0 +1,1077 @@
+#+TITLE: Patterns
+
+* TODO Split this file up
+for now this is pretty much the configuration of my [[https://oblivious.observer][blog]], I'll split this file
+up into smaller collections of configuration over time.
+* Set up some Variables
+Lets begin with who I am, I don't want the author and email address of my
+exports to be set to something other than the following:
+#+name: oblivious_name
+#+BEGIN_SRC conf
+Oblivious Observer
+#+END_SRC
+
+In order to avoid automatic crawlers to find our email address from the
+~.dir-locals.el~ or the git commit history, use the super secure caesar chiffre:
+
+#+name: oblivious_email
+#+BEGIN_SRC conf
+\"echo 5oyvivbhf?5ofreire[ng]cebgbaznvy?pbz | tr [0-9A-Za-z.?] [5-90-4N-ZA-Mn-za-m?.]\"
+#+END_SRC
+
+Set up the working directory of the site:
+#+name: oblivious_working_directory
+#+BEGIN_SRC conf
+~/blog
+#+END_SRC
+
+#+begin_details org
+:title: [[color:black][org-mode source]]
+#+begin_src org
+Lets begin with who I am, I don't want the author and email address of my
+exports to be set to something other than the following:
+,#+name: oblivious_name
+,#+BEGIN_SRC conf
+Oblivious Observer
+,#+END_SRC
+
+In order to avoid automatic crawlers to find our email address from the
+~.dir-locals.el~ or the git commit history, use the super secure caesar chiffre:
+
+,#+name: oblivious_email
+,#+BEGIN_SRC conf
+\"echo 5oyvivbhf?5ofreire[ng]cebgbaznvy?pbz | tr [0-9A-Za-z.?] [5-90-4N-ZA-Mn-za-m?.]\"
+,#+END_SRC
+
+Set up the working directory of the site:
+,#+name: oblivious_working_directory
+,#+BEGIN_SRC conf
+~/#+STARTUP: showall indent
+  #+STARTUP: hidestars
+  #+BEGIN_HTML
+  ---
+  layout: default
+  title: title
+  excerpt: excerpt
+  ---
+
+,#+END_SRC
+#+END_SRC
+#+end_details
+* Configuring git config
+:properties:
+:header-args: :tangle ./bin/.git_user_info :noweb yes :comments link :tangle-mode (identity #o551)
+:end:
+
+The following block will make sure the =.git/config= file does not leak personal information:
+#+BEGIN_SRC bash
+if grep -q "^\[user\]$" .git/config
+then
+  sed -i 's/name = .*/name = <<oblivious_name>>/g;s/email = .*/email = <<oblivious_email>>/g' .git/config
+else
+  echo "
+[user]
+        email = <<oblivious_email>>
+        name = <<oblivious_name>>
+" >> .git/config
+fi
+#+END_SRC
+* Override org-mode variables
+:properties:
+:header-args: :noweb yes
+:end:
+We also want emacs to use different values for name and email address in this
+repository:
+#+name: org_override_personal_information
+#+BEGIN_SRC emacs-lisp
+(let ((full-name "<<oblivious_name>>")
+      (full-mail "<<oblivious_email>>"))
+  (setq user-full-name full-name)
+  (setq user-mail-address full-mail))
+#+END_SRC
+
+* Syntax Highlighting
+As I'm regularly using a bunch of code blocks and my end goal is to be able to
+headlessly build sites using =oblivious=, I really like the idea of having
+syntax highlighting.
+
+Sadly =htmlize=, the default means of =org-publish= to highlight syntax does not
+seem to work in =batch= mode. The result is that depending on whether or not you
+build a site headlessly, you end up with or without syntax highlighting, which
+is quite frankly not acceptable, when you've spent the last two days putting
+together something that is supposed to headlessly export org files with syntax
+highlighting.
+
+An alternative to =htmlize= is =highlight.js=, however here you initially run
+into the problem that the orgmode export creates source blocks, which look
+different than the source blocks =highlight.js= expects. At some point I [[https://old.reddit.com/r/emacs/comments/bhlxmd/where_is_the_proper_way_of_rewriting_or_replacing/elubv0x/][found]]
+the following nice advice, we can simply add into our publish configuration in
+order to make it work:
+#+name: org-highlight-js-compatibility
+#+BEGIN_SRC emacs-lisp :tangle no
+(defun my/org-html-src-block (html)
+  "Modify the output of org-html-src-block for highlight.js"
+  (replace-regexp-in-string
+   "</pre>" "</code></pre>"
+   (replace-regexp-in-string
+    "<pre class=\"src src-\\(.*\\)\">"
+    "<pre><code class=\"\\1\">"
+    html)))
+
+(advice-add 'org-html-src-block :filter-return #'my/org-html-src-block)
+#+END_SRC
+
+With this in place it is possible to indeed use syntax highlighting with =highlight.js=.
+* Configure org-publish
+:properties:
+:header-args: :tangle ./.config/org-publish.el :noweb yes :comments link :tangle-mode (identity #o440)
+:end:
+We want to set up org-publish for all the files inside this repository.
+Initially my Idea was to configure =org-publish= from within the
+=.dir-locals.el= file, but apparently this does not seem to work. Instead lets
+go ahead and inject it into the systems emacs configuration, so we can keep the
+configuration of our site local while still using it in our emacs configuration.
+
+#+name: org_publish_configuration
+#+BEGIN_SRC emacs-lisp
+(use-package htmlize
+  :ensure t)
+
+(use-package ox-publish
+  :init
+    (setq my-blog-header-file "<<oblivious_working_directory>>/partials/header.html"
+        my-blog-footer-file "<<oblivious_working_directory>>/partials/footer.html"
+        org-html-validation-link nil)
+
+    ;; Load partials on memory
+    (defun my-blog-header (arg)
+      (with-temp-buffer
+        (insert-file-contents my-blog-header-file)
+        (buffer-string)))
+
+    (defun my-blog-footer (arg)
+      (with-temp-buffer
+        (insert-file-contents my-blog-footer-file)
+        (buffer-string)))
+
+    (defun filter-local-links (link backend info)
+    "Filter that converts all the /index.html links to /"
+      (if (org-export-derived-backend-p backend 'html)
+          (replace-regexp-in-string "/index.html" "/" link)))
+
+    (defun rename-config-page (arg)
+      (if (file-exists-p "<<oblivious_working_directory>>/public/config/readme.html")
+          (rename-file "<<oblivious_working_directory>>/public/config/readme.html" "~/blog/public/config/index.html" t)))
+
+    <<org-highlight-js-compatibility>>
+
+  :config
+    (setq org-html-htmlize-output-type nil)
+
+    (setq org-publish-project-alist
+      '(;; Publish the posts
+        ("blog-posts"
+         :base-directory "<<oblivious_working_directory>>/posts"
+         :base-extension "org"
+         :publishing-directory "<<oblivious_working_directory>>/public"
+         :recursive t
+         :publishing-function org-html-publish-to-html
+         :headline-levels 4
+         :section-numbers nil
+         :html-head nil
+         :html-head-include-default-style nil
+         :html-head-include-scripts nil
+         :html-preamble my-blog-header
+         :html-postamble my-blog-footer
+         )
+
+         ;; For static files that should remain untouched
+         ("blog-posts-static"
+          :base-directory "<<oblivious_working_directory>>/posts/"
+          :base-extension "org\\|css\\|js\\|png\\|jpg\\|gif\\|pdf\\|mp3\\|ogg\\|swf\\|eot\\|svg\\|woff\\|woff2\\|ttf"
+          :publishing-directory "<<oblivious_working_directory>>/public"
+          :recursive t
+          :publishing-function org-publish-attachment
+          )
+
+          ;; The static directory contains our index.org landing page for the blog itself:
+          ("blog-index"
+           :base-directory "<<oblivious_working_directory>>/index"
+           :base-extension "org"
+           :publishing-directory "<<oblivious_working_directory>>/public"
+           ;:preparation-function
+           :publishing-function org-html-publish-to-html
+           :section-numbers nil
+           :html-head nil
+           :html-head-include-default-style nil
+           :html-head-include-scripts nil
+           :html-preamble my-blog-header
+           :html-postamble my-blog-footer
+           )
+
+          ;; Create the about page from the readme.org file
+          ("blog-config"
+           :base-directory "<<oblivious_working_directory>>/"
+           :publishing-function org-html-publish-to-html
+           :publishing-directory "<<oblivious_working_directory>>/public/config/"
+           :completion-function rename-config-page
+           :exclude ".*"
+           :include ["readme.org"]
+           :section-numbers nil
+;           :html-head-include-scripts nil
+           :html-preamble my-blog-header
+;           :html-postamble my-blog-footer
+           )
+
+          ;; Create the about page from the readme.org file
+          ("blog-tags"
+           :base-directory "<<oblivious_working_directory>>/tags"
+           :publishing-function org-html-publish-to-html
+           :publishing-directory "<<oblivious_working_directory>>/public/tags/"
+           :exclude ".*"
+           :include ["index.org"]
+           :section-numbers nil
+;           :html-head-include-scripts nil
+           :html-preamble my-blog-header
+;           :html-postamble my-blog-footer
+           )
+
+          ;; Create the graph page from the readme.org file
+          ("blog-about"
+           :base-directory "<<oblivious_working_directory>>/about"
+           :publishing-function org-html-publish-to-html
+           :publishing-directory "<<oblivious_working_directory>>/public/about/"
+           :exclude ".*"
+           :include ["index.org"]
+           :section-numbers nil
+;           :html-head-include-scripts nil
+           :html-preamble my-blog-header
+;           :html-postamble my-blog-footer
+           )
+
+          ;; CSS static files that should remain untouched
+          ("blog-static"
+           :base-directory "<<oblivious_working_directory>>/static"
+           :base-extension "css\\|js\\|png\\|jpg\\|gif\\|pdf\\|mp3\\|ogg\\|swf\\|eot\\|svg\\|woff\\|woff2\\|ttf\\|txt"
+           :publishing-directory "<<oblivious_working_directory>>/public/static"
+           :recursive t
+           :publishing-function org-publish-attachment
+           )
+
+          ;; CSS static files that should remain untouched
+          ("blog-assets"
+           :base-directory "<<oblivious_working_directory>>/assets"
+           :base-extension "css\\|js\\|png\\|jpg\\|gif\\|pdf\\|mp3\\|ogg\\|swf\\|eot\\|svg\\|woff\\|woff2\\|ttf\\|txt"
+           :publishing-directory "<<oblivious_working_directory>>/public/static"
+           :recursive t
+           :publishing-function org-publish-attachment
+           )
+
+          ;; Combine the two previous components in a single one
+          ("blog" :components ("blog-posts"
+                               "blog-posts-static"
+                               "blog-index"
+                               "blog-config"
+                               "blog-static"
+                               "blog-tags"
+                               "blog-about"
+                               "blog-assets"))
+
+          ))
+
+    (add-to-list 'org-export-filter-link-functions 'filter-local-links)
+    )
+#+END_SRC
+* Automatically load personal Information
+:properties:
+:header-args: :tangle .dir-locals.el :noweb yes :comments link
+:end:
+
+# # :tangle-mode (identity #o444)
+Now lets create the =.dir-locals.el= in order to apply this configuration:
+#+BEGIN_SRC emacs-lisp
+ ((org-mode . (
+   (eval .
+     <<org_override_personal_information>>
+   )
+ )))
+#+END_SRC
+* Resources
+:properties:
+:header-args: :tangle ./bin/.get_resources :noweb yes :comments link :tangle-mode (identity #o551)
+:end:
+Resources - or dependencies - are neccessary to build a site, but ususally they
+are part of their own projects and developed on their own. This section is all
+about dealing with stuff like CSS, Fonts and Javascript.
+
+Ideally as a website, we always want to selfhost everything instead of linking
+to outside sources. This can be achieved by defining how to download those
+dependencies on a per dependency base.
+
+Running =oblivious fetch= will then download all of those resources and put them
+wherever it makes sense (e.g. the =./static= directory).
+** Github Releases
+For probably most of the resources we want to grab, we can probably grab some sort of github release:
+#+BEGIN_SRC bash
+# e.g.: get_latest_github_release twbs/bootstrap | grep whatever
+get_latest_github_release() {
+  curl -s https://api.github.com/repos/$1/releases/latest
+}
+#+END_SRC
+** Bootstrap CSS
+
+Big Todo: we are already downloading with the continue flag in wget and storing
+the data on =/tmp= but we are also deleting the zip archive. If we only delete
+the rest, we can faster refetch stuff.
+
+#+BEGIN_SRC bash
+resource_link="$(get_latest_github_release twbs/bootstrap | grep 'browser_download_url.*dist' | cut -d ':' -f2- | tr -d '""')"
+resource_archive="$(echo $resource_link | rev | cut -d '/' -f1 | rev)"
+resource_name="$(echo $resource_link | rev | cut -d '/' -f1 | rev | sed 's/.zip//')"
+mkdir -p /tmp/oblivious/bootstrap
+wget -q -c --show-progress $resource_link -P /tmp/oblivious/zipfiles/
+unzip -p /tmp/oblivious/zipfiles/$resource_archive $resource_name/css/bootstrap.min.css > ./static/bootstrap.min.css
+unzip -p /tmp/oblivious/zipfiles/$resource_archive $resource_name/js/bootstrap.bundle.min.js > ./static/bootstrap.bundle.min.js
+unzip -p /tmp/oblivious/zipfiles/$resource_archive $resource_name/js/bootstrap.min.js   > ./static/bootstrap.min.js
+# rm -rf /tmp/oblivious/bootstrap
+#+END_SRC
+
+#+begin_details org
+:title: [[color:black][Example bootstrap configuration]]
+#+BEGIN_SRC org
+#+html_head: <link rel="stylesheet" href="/static/bootstrap.min.css">
+#+html_head: <script src="/static/bootstrap.min.js"></script>
+#+END_SRC
+#+end_details
+** JQuery
+#+BEGIN_SRC bash
+resource_link="$(get_latest_github_release jquery/jquery | grep 'zipball_url' | cut -d ':' -f2- | tr -d '","')"
+resource_archive="$(echo $resource_link | rev | cut -d '/' -f1 | rev)"
+resource_name="jquery-jquery-*"
+mkdir -p /tmp/oblivious/jquery
+wget -q -c --show-progress $resource_link -P /tmp/oblivious/jquery/
+unzip -p /tmp/oblivious/jquery/$resource_archive $resource_name/dist/jquery.min.js > ./static/jquery.min.js
+unzip -p /tmp/oblivious/jquery/$resource_archive $resource_name/dist/jquery.slim.min.js > ./static/jquery.slim.min.js
+rm -rf /tmp/oblivious/jquery
+#+END_SRC
+
+#+begin_details org
+:title: [[color:black][Example bootstrap configuration]]
+#+BEGIN_SRC org
+,#+html_head: <script src="/static/jquery.min.js"></script>
+,#+html_head: <script src="/static/jquery.slim.min.js"></script>
+#+END_SRC
+#+end_details
+** Popper.js
+#+BEGIN_SRC bash
+resource_version="$(get_latest_github_release popperjs/popper-core | grep 'zipball_url' | cut -d ':' -f2- | tr -d '","' | rev | cut -d '/' -f1 | rev)"
+resource_url="https://unpkg.com/browse/@popperjs/core@2.4.4/dist/umd/"
+wget -q -c --show-progress $resource_url/popper.min.js -P ./static/
+#+END_SRC
+
+#+begin_details org
+:title: [[color:black][Example bootstrap configuration]]
+#+BEGIN_SRC org
+,#+html_head: <script src="/static/popper.min.js"></script>
+#+END_SRC
+#+end_details
+** Google Roboto Font
+#+BEGIN_SRC bash
+resource_link="https://fonts.googleapis.com/css?family=Roboto:300,300italic,700,700italic"
+wget -q -O- $resource_link | sed 's!https://fonts.gstatic.com/s/roboto/v20/!./static/!' > ./static/roboto.txt
+for font_link in $(wget -q $resource_link -O- | tr '()' '\n' | grep https)
+do
+  wget -q -c --show-progress $font_link -P ./static
+done
+#+END_SRC
+
+#+begin_details org
+:title: [[color:black][Example font configuration for Roboto]]
+#+BEGIN_SRC org
+#+html_head: <link rel="stylesheet" href="/static/roboto.txt">
+#+END_SRC
+#+end_details
+** TODO Recursive Font
+https://www.recursive.design/
+** Highlight.js
+There is a nice little download service on the highlight.js website, where you
+can download a custom release of highlight.js containing all languages you'd
+like to support. You can simply download it once manually and from then on use a
+copy of the request. Also here is an example on how to use cURL with CSRF tokens
+etc.:
+
+Prepare directory:
+#+BEGIN_SRC bash
+mkdir -p /tmp/oblivious/highlightjs/
+#+END_SRC
+
+Now make an initial request to the highlightjs site in order to obtain the csrf token as well as the csrfmiddlewaretoken from the hidden form field:
+#+BEGIN_SRC bash
+csrfmiddlewaretoken=$(curl -s https://highlightjs.org/download/ -c /tmp/oblivious/highlightjs/cookies.txt | grep "csrfmiddlewaretoken" | tr ' ' '\n' | grep value | cut -d '"' -f2)
+token="$(cat /tmp/oblivious/highlightjs/cookies.txt | grep csrf | cut -f 7)"
+#+END_SRC
+
+Now we can fill in the request we initially made, when downloading manually.you
+can obtain these requests easily in a browser, e.g. in chromium you can:
+- press F12
+- open the Network Tab
+- press the Download button
+- right click on the request you are interested in and choose 'Copy as cURL'
+
+#+BEGIN_SRC bash
+curl -s 'https://highlightjs.org/download/' \
+  -H 'authority: highlightjs.org' \
+  -H 'cache-control: max-age=0' \
+  -H 'upgrade-insecure-requests: 1' \
+  -H 'origin: https://highlightjs.org' \
+  -H 'content-type: application/x-www-form-urlencoded' \
+  -H 'user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.105 Safari/537.36' \
+  -H 'accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9' \
+  -H 'sec-fetch-site: same-origin' \
+  -H 'sec-fetch-mode: navigate' \
+  -H 'sec-fetch-user: ?1' \
+  -H 'sec-fetch-dest: document' \
+  -H 'referer: https://highlightjs.org/download/' \
+  -H 'accept-language: en-US,en;q=0.9,de;q=0.8' \
+  -H "cookie: csrftoken=$token" \
+  --data-raw "csrfmiddlewaretoken=$csrfmiddlewaretoken&properties.js=on&apache.js=on&bash.js=on&c.js=on&csharp.js=on&cpp.js=on&c-like.js=on&css.js=on&coffeescript.js=on&diff.js=on&go.js=on&xml.js=on&http.js=on&json.js=on&java.js=on&javascript.js=on&kotlin.js=on&less.js=on&lua.js=on&makefile.js=on&markdown.js=on&nginx.js=on&objectivec.js=on&php.js=on&php-template.js=on&perl.js=on&plaintext.js=on&python.js=on&python-repl.js=on&ruby.js=on&rust.js=on&scss.js=on&sql.js=on&shell.js=on&swift.js=on&ini.js=on&typescript.js=on&yaml.js=on&armasm.js=on&ada.js=on&accesslog.js=on&arduino.js=on&asciidoc.js=on&abnf.js=on&awk.js=on&basic.js=on&bnf.js=on&cmake.js=on&csp.js=on&clojure.js=on&clojure-repl.js=on&dns.js=on&dts.js=on&django.js=on&dockerfile.js=on&erlang.js=on&erlang-repl.js=on&ebnf.js=on&fortran.js=on&gradle.js=on&haskell.js=on&x86asm.js=on&julia.js=on&julia-repl.js=on&ldif.js=on&llvm.js=on&latex.js=on&lisp.js=on&mathematica.js=on&matlab.js=on&routeros.js=on&nix.js=on&ocaml.js=on&openscad.js=on&ruleslanguage.js=on&pf.js=on&pony.js=on&pgsql.js=on&processing.js=on&prolog.js=on&protobuf.js=on&puppet.js=on&purebasic.js=on&profile.js=on&q.js=on&qml.js=on&r.js=on&reasonml.js=on&scheme.js=on&scilab.js=on&smalltalk.js=on&tcl.js=on&vbscript.js=on&vhdl.js=on&vala.js=on&vim.js=on&vbnet.js=on&crmsh.js=on&dsconfig.js=on" \
+  --compressed > /tmp/oblivious/highlightjs/highlightjs.zip
+#+END_SRC
+
+Next unpack the archive and copy the contents to the correct place:
+- we are only grabbing the github.css here, don't want to take more than we need
+#+BEGIN_SRC bash
+unzip /tmp/oblivious/highlightjs/highlightjs.zip -d /tmp/oblivious/highlightjs/
+mv /tmp/oblivious/highlightjs/highlight.pack.js ./static/
+mv /tmp/oblivious/highlightjs/styles/github.css ./static/
+rm -rf /tmp/oblivious/highlightjs
+#+END_SRC
+
+
+#+begin_details org
+:title: [[color:black][Example highlight.js configuration]]
+#+BEGIN_SRC org
+#+html_head: <link rel="stylesheet" href="/static/github.css">
+#+html_head: <script src="/static/highlight.pack.js"></script>
+#+html_head: <script>hljs.initHighlightingOnLoad();</script>
+#+END_SRC
+#+end_details
+
+** TODO lunr.js
+- add search using Lunr.js, build the index on release
+** visjs: vis-network
+Apparently vis-network needs to be built, but luckily we can just grab a version
+from unpkg:
+#+BEGIN_SRC bash
+wget -q -c --show-progress https://unpkg.com/vis-network/standalone/umd/vis-network.min.js -O ./static/vis-network.min.js
+#+END_SRC
+* Assets
+Assets are files included into the webisite, but other than resources, they are
+not developed on their own. Other than templates assets are usually not
+autogenerated from this file and thus versioned with the rest of the project.
+Assets are defined in the =./assets= directory and copied over to the
+=./public/static= directory.
+* Templates
+Templates are pieces of configuration, which are glued together in order to
+create specific behavior or theming of your site. They can consist of resources,
+assets or custom pieces of code.
+
+Templates can for example be created in the form of org files under the
+templates directory and then include those using =#+setupfile:= or =#+include=.
+** Bootstrap
+:properties:
+:header-args: :tangle ./templates/bootstrap.org :comments link :tangle-mode (identity #o440)
+:end:
+
+Lets import the Bootstrap  CSS and Javascript stuff (apparently Bootstrap wants to load jquery, then popper, then bootstrap stuff):
+#+BEGIN_SRC org
+,#+html_head: <script src="/static/jquery.min.js"></script>
+,#+html_head: <script src="/static/jquery.slim.min.js"></script>
+,#+html_head: <script src="/static/popper.min.js"></script>
+#+END_SRC
+
+#+BEGIN_SRC org
+,#+html_head: <link rel="stylesheet" href="/static/bootstrap.min.css">
+,#+html_head: <script src="/static/bootstrap.min.js"></script>
+,#+html_head: <script src="/static/bootstrap.bundle.min.js"></script>
+#+END_SRC
+
+We want to have the Roboto Fonts available (actually not sure if Bootstrap uses
+them..) I'll have to look that one up:
+#+BEGIN_SRC org
+,#+html_head: <link rel="stylesheet" href="/static/roboto.txt">
+#+END_SRC
+
+Lets also apply some padding, so the site looks centered:
+#+BEGIN_SRC org
+,#+html_head: <style type="text/css">body{ padding: 5em 20%;}</style>
+#+END_SRC
+
+The default Bootstrap color for code was purple, lets make it grey instead:
+#+BEGIN_SRC org
+,#+html_head: <style type="text/css">code { color: #808080;}</style>
+#+END_SRC
+
+And finally lets reduce the Padding for the =pre= class. This is due to the fact
+that we also use =highlight.js= and have to use a bit of nifty advice to make
+sure that org-mode exports to html in a format that =highlight.js= is able to
+understand: Basically we end up creating =code= inside of the previous =code=
+environments and with this new export behavior, the default of =8pt= padding for
+=pre= looks rather bad.
+#+BEGIN_SRC org
+,#+html_head: <style type="text/css">pre { padding: 0pt;}</style>
+#+END_SRC
+
+For the navbar lets disable padding and margins:
+#+BEGIN_SRC org
+,#+html_head: <style type="text/css">.navbar { margin:0 !important; padding: 0px !important; } </style>
+#+END_SRC
+** Monospaced Title Font
+:properties:
+:header-args: :tangle ./templates/monospace-title-font.org :comments link :tangle-mode (identity #o440)
+:end:
+#+BEGIN_SRC org
+#+html_head: <style type="text/css"> .title{ font-family: SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; }</style>
+#+html_head: <style type="text/css"> .title{ color: #808080; font-weight: 500; line-height: 1.2; }</style>
+#+END_SRC
+** TODO Syntax Highlighting in batch mode
+:properties:
+:header-args: :tangle ./templates/syntax-highlighting.org :comments link :tangle-mode (identity #o440)
+:end:
+#+BEGIN_SRC org
+#+html_head: <link rel="stylesheet" href="/static/github.css">
+#+html_head: <script src="/static/highlight.pack.js"></script>
+#+html_head: <script>hljs.initHighlightingOnLoad();</script>
+#+END_SRC
+** Floating Table of Contents
+:properties:
+:header-args:css: :tangle ./static/floating-toc.css :comments link
+:header-args:org: :tangle ./templates/floating-toc.org :comments link :tangle-mode (identity #o440)
+:end:
+
+This is taken from worg.css:
+#+BEGIN_SRC css
+/*TOC inspired by https://orgmode.org/worg/ */
+#table-of-contents {
+    /* Place the toc in the top right corner */
+    position: fixed; right: 0em; top: 0em;
+    margin-top: 120px; /* offset from the top of the screen */
+
+    /* It shrinks and grows as necessary */
+    padding: 0em !important;
+    width: auto !important;
+    min-width: auto !important;
+
+    font-size: 10pt;
+    background: white;
+    line-height: 12pt;
+    text-align: right;
+
+    box-shadow: 0 0 1em #777777;
+    -webkit-box-shadow: 0 0 1em #777777;
+    -moz-box-shadow: 0 0 1em #777777;
+    -webkit-border-bottom-left-radius: 5px;
+    -moz-border-radius-bottomleft: 5px;
+
+    /* Ensure doesn't flow off the screen when expanded */
+    max-height: 80%;
+    overflow: auto;}
+
+/* How big is the text “Table of Contents” and space around it */
+#table-of-contents h2 {
+    font-size: 13pt;
+    max-width: 9em;
+    border: 0;
+    font-weight: normal;
+    padding-left: 0.5em;
+    padding-right: 0.5em;
+    padding-top: 0.05em;
+    padding-bottom: 0.05em; }
+
+/* Intially have the TOC folded up; show it if the mouse hovers it */
+#table-of-contents #text-table-of-contents {
+    display: none;
+    text-align: left; }
+
+#table-of-contents:hover #text-table-of-contents {
+    display: block;
+    padding: 0.5em;
+    margin-top: -1.5em; }
+#+END_SRC
+
+#+BEGIN_SRC org
+,#+html_head: <link rel="stylesheet" href="/static/floating-toc.css">
+#+END_SRC
+** TODO Table of Content as part of Navbar
+Just an idea, but it would be kind of cool to have it either at the side of the
+page or as part of the stickt navbar with the option to drop down.
+** Navigation
+:properties:
+:header-args: :tangle ./partials/header.html :comments link :tangle-mode (identity #o440)
+:end:
+
+This one is the navigation bar I use, it is included as html header file. Not
+sure if that is the best way to go about this. I would really like an option to
+overwrite the custom header for some pages.
+
+Notes:
+- The =fixed-top= class makes the navbar work without margins etc.
+
+#+BEGIN_SRC html
+<nav class="navbar fixed-top navbar-expand-lg navbar-light bg-light">
+  <div class="container">
+
+  <a class="navbar-brand" href="/"> <img src="/static/observer.png" width="35" height="35" class="d-inline-block align-top" alt=""> </a>
+
+
+  <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+    <span class="navbar-toggler-icon"></span>
+  </button>
+
+  <div class="collapse navbar-collapse" id="navbarSupportedContent">
+    <ul class="nav navbar-nav ml-auto w-100 justify-content-left">
+      <li class="nav-item">
+        <a class="nav-link" href="/"> Oblivious Observer </a>
+      </li>
+    </ul>
+    <ul class="nav navbar-nav ml-auto w-100 justify-content-end">
+      <li class="nav-item">
+        <a class="nav-link" href="/about">about</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link" href="/config">config</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link" href="/">src</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link" href="/tags">tags</a>
+      </li>
+    </ul>
+  </div>
+  </div>
+</nav>
+#+END_SRC
+** TODO Remove unused stuff
+Is it possible to remove all files which aren't referenced by a linked
+automatically in order to avoid dead directories etc?
+
+Basically there is the entry site as well as some posts (which are linked) and
+resources (images, css, javascript), which usually are also referenced in some
+way.
+
+If a site is not linked by anything and if this site is not the entrypoint to
+your website, then it could be unnecessary to keep it in the public folder.
+
+Only thing necessary apart from that would be a whitlist.
+** Simple Post List
+:properties:
+:header-args: :tangle ./templates/post-list.org :comments link :tangle-mode (identity #o440)
+:end:
+In order to use this post list, the first line of the file needs to contain this:
+#+BEGIN_EXAMPLE org
+# -*- org-confirm-babel-evaluate: nil; -*-
+#+END_EXAMPLE
+
+We can use a nifty little block of bash in order to create some links to out
+posts, which are ordered by date:
+
+#+BEGIN_SRC org
+,#+name: posts_list0
+,#+BEGIN_SRC bash :exports none :output org :results raw :cache no
+for filename in $(ls ../posts)
+do
+  post_title=$(head ../posts/$filename/index.org | grep -i "#+title:" | cut -d':' -f2)
+  post_date=$(head ../posts/$filename/index.org | grep -i "#+date:" | cut -d':' -f2)
+
+  echo "- $post_date [[../$filename/index.html][$post_title]]"
+done | sort -rn
+,#+END_SRC
+
+,#+CALL: posts_list0()
+#+END_SRC
+** Bootstrap Post List
+:properties:
+:header-args: :tangle ./templates/bootstrap-post-list.org :comments link :tangle-mode (identity #o440)
+:end:
+In order to use this post list, the first line of the file needs to contain this:
+#+BEGIN_EXAMPLE org
+# -*- org-confirm-babel-evaluate: nil; -*-
+#+END_EXAMPLE
+
+This Post list is a bit more complicated. It will output an HTML export block,
+which contains raw html.
+
+#+BEGIN_SRC org
+# disable sub/superscripting
+,#+OPTIONS: ^:nil
+
+,#+name: bootstrap_posts_list
+,#+BEGIN_SRC bash :exports none :output raw :results raw :cache no
+echo '#+BEGIN_EXPORT html'
+echo '<div class="list-group">'
+
+order_posts_by_date() {
+for post_name in $(ls ../posts)
+do
+  post_date=$(head ../posts/$post_name/index.org | grep -i "#+date:" | cut -d'<' -f2 | cut -d' ' -f1)
+
+  echo "$post_date;$post_name"
+done | sort -rn
+}
+
+filetags() {
+  post_name="$1"
+  tags="$(head ../posts/$post_name/index.org | grep -i "#+filetags:" | cut -d':' -f2-)"
+
+  for t in $(echo $tags | tr ':' '\n' | sort | tr '\n' ' '); do
+    if [ "$t" == "draft" ]; then
+      badge_type="badge-danger";
+    else
+      badge_type="badge-secondary"
+    fi
+    echo "<span class=\"badge $badge_type\">$(echo $t | sed 's/_/ /g')</span>"
+  done
+}
+
+for post in $(order_posts_by_date); do
+  post_date="$(echo $post | cut -d';' -f1 | awk -F'-' '{ print $3"."$2"."$1}')"
+  post_name="$(echo $post | cut -d';' -f2)"
+  post_title="$(head ../posts/$post_name/index.org | grep -i "#+title:" | cut -d':' -f2-)"
+  post_description="$(head ../posts/$post_name/index.org | grep -i "#+description:" | cut -d':' -f2-)"
+
+  echo "
+  <a href=\"/$post_name\" class=\"list-group-item list-group-item-action flex-column align-items-start\">
+    <div class=\"d-flex w-100 justify-content-between\">
+      <h5 class=\"mb-1\">$post_title</h5>
+      <small>$post_date</small>
+    </div>
+    <p class=\"mb-1\">$post_description</p>
+    <small>$(filetags $post_name)</small>
+  </a>
+  "
+done
+
+echo '</div>'
+echo '#+END_EXPORT'
+,#+END_SRC
+
+,#+CALL: bootstrap_posts_list()
+#+END_SRC
+** Tags
+:properties:
+:header-args: :tangle ./tags/index.org :tangle-mode (identity #o440)
+:end:
+
+Create Tags page or multiple Tag pages.. (associative arrays?)
+
+This generates a page containing a list of posts. The following block will
+create =./tags/index.org=, which will be used to dynamically create a taglist,
+every time we publish:
+
+#+BEGIN_SRC org
+# -*- org-confirm-babel-evaluate: nil; -*-
+,#+title: Tags
+,#+include: ../templates/default.org
+,#+include: ../templates/knowledge_graph.org
+
+,#+OPTIONS: toc:nil
+# disable sub/superscripting
+,#+OPTIONS: ^:nil
+
+#+begin_center
+Doubleclick on the Nodes in order to jump to a tag or to open a blogpost.
+#+end_center
+
+,#+name: generate_tag_list
+,#+BEGIN_SRC bash :exports none :output raw :results raw :cache no
+echo '#+BEGIN_EXPORT html'
+
+declare -A tags
+
+collect_tags() {
+for post_name in $(ls ../posts)
+do
+  post_date="$(head ../posts/$post_name/index.org | grep -i "#+date:" | grep -i "#+date:" | cut -d':' -f2 | tr -d '<>TheMoWFidSaturn ' | awk -F'-' '{ print $3"."$2"."$1}')"
+  post_tags="$(head ../posts/$post_name/index.org | grep -i "#+filetags:" | cut -d':' -f2- | tr ':' ' ')"
+  for t in $post_tags; do
+
+    tags[$t]="${tags[$t]} $post_date:$post_name"
+  done
+done
+
+for t in $(echo ${!tags[@]} | tr ' ' '\n' | sort | tr '\n' ' '); do
+  tag="$(echo "$t" | tr '_' ' ')"
+echo "
+<div class="card border-dark mb-3" style="">
+  <a id="$tag">
+  <div class="card-header">$tag</div>
+  <div class="card-body text-dark">
+"
+  for p in $(echo ${tags[$t]} | tr ' ' '\n' | sort -rn | tr '\n' ' ') ; do
+    post_date="$(echo $p | cut -d':' -f1)"
+    post="$(echo $p | cut -d':' -f2)"
+    post_name="$(echo $post | cut -d';' -f2)"
+    post_title="$(head ../posts/$post_name/index.org | grep -i "#+title:" | cut -d':' -f2-)"
+    post_description="$(head ../posts/$post_name/index.org | grep -i "#+description:" | cut -d':' -f2-)"
+
+echo "
+    <a href=\"/$post_name\" class=\"list-group-item list-group-item-action flex-column align-items-start\">
+      <div class=\"d-flex w-100 justify-content-between\">
+        <h5 class=\"mb-1\">$post_title</h5>
+        <small>$post_date</small>
+      </div>
+      <p class=\"mb-1\">$post_description</p>
+    </a>
+"
+
+  done
+echo "
+  </div>
+</div>
+<hr>
+"
+done
+}
+
+collect_tags
+
+echo '#+END_EXPORT'
+,#+END_SRC
+
+,#+CALL: generate_tag_list()
+#+END_SRC
+** Clean up dead links / resources
+#+BEGIN_EXAMPLE bash
+grep -rnw "href" | grep -v "^static/" | tr ' ' '\n' | grep href | sort | uniq | grep -v '\\"\|&gt' | grep "static"
+#+END_EXAMPLE
+** TODO Mathjax
+** TODO PubCSS
+Not sure if this one is any good:
+- https://github.com/thomaspark/pubcss
+** Knowledge Graph
+:properties:
+:header-args: :tangle ./templates/knowledge_graph.org :mkdirp yes :tangle-mode (identity #o440)
+:end:
+
+I've had this idea to connect posts using their tags for a while now. The
+following code is using vis.js to generate a graph connecting posts and tags.
+
+Double clicking on the nodes will open the blog post or jump to the tag.
+
+#+BEGIN_SRC org
+# -*- org-confirm-babel-evaluate: nil; -*-
+# ,#+html_head: <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+,#+html_head: <script type="text/javascript" src="/static/vis-network.min.js"></script>
+,#+html_head: <style type="text/css"> #mynetwork { width: 100%; height: 600px; border: 0px solid lightgray; } </style>
+
+,#+name: generate_graph
+,#+BEGIN_SRC bash :exports none :output raw :results raw :cache no
+echo '#+BEGIN_EXPORT html'
+
+declare -A tags
+declare -A tag_ids
+edgelist=""
+post_id="1"
+
+echo "
+<div id=\"mynetwork\"></div>
+<script type=\"text/javascript\">
+  // create an array with nodes
+  var nodes = new vis.DataSet([
+"
+
+for post_name in $(ls ../posts)
+do
+  post_tags="$(head ../posts/$post_name/index.org | grep -i "#+filetags:" | cut -d':' -f2- | tr ':' ' ')"
+  post_title="$(head ../posts/$post_name/index.org | grep -i "#+title:" | cut -d':' -f2- | awk '{$1=$1};1' | fold -s -w 20 | tr '\n' '&' | sed 's/&/\\n/g' | rev | cut -c 3- | rev | tr -d '\n')"
+
+for t in $post_tags; do
+    tags[$t]="${tags[$t]} $post_id"
+  done
+  echo "{id: $post_id, label: '$post_title', url: '/$post_name'}",
+  post_id=$(($post_id + 1))
+done
+
+for K in "${!tags[@]}"; do
+  weight="$(echo ${tags[$K]} | tr ' ' '\n' | wc -l)"
+
+  tag_ids[$K]="$post_id"
+  echo "{id: $post_id, shape: 'dot', label: '$(echo $K|tr '_' ' ')', value:'$weight', url: '/tags/#$K'},"
+  post_id=$(($post_id + 1))
+done
+
+echo "
+  ]);
+
+  // create an array with edges
+  var edges = new vis.DataSet([
+"
+
+for K in "${!tags[@]}"; do
+  for to in ${tags[$K]}; do
+    echo "    {from: ${tag_ids[$K]}, to: $to},"
+  done
+done
+
+echo "
+  ]);
+
+  // create a network
+  var container = document.getElementById('mynetwork');
+  var data = {
+    nodes: nodes,
+    edges: edges
+  };
+  var options = {
+    width: '100%',
+    height: '100%',
+
+    shape: \"dot\",
+    nodes: {
+      shape: 'box'
+    },
+    physics: {
+      "barnesHut": {
+        "springConstant": 0,
+        "avoidOverlap": 0.5
+      },
+    }
+  };
+  var network = new vis.Network(container, data, options);
+
+  network.on( 'doubleClick', function(properties) {
+    console.log('clicked node ' + properties.nodes);
+    if(!properties.nodes.length) return;
+    var node = nodes.get(properties.nodes[0]);
+    window.location.replace(node.url);
+  });
+</script>
+"
+
+echo '#+END_EXPORT'
+,#+END_SRC
+
+,#+CALL: generate_graph()
+#+END_SRC
+** Comments
+:properties:
+:header-args: :tangle ./templates/comments.org :mkdirp yes :tangle-mode (identity #o440)
+:end:
+
+Comments can be set up using github issues. There is even an official github
+project called utterances, which takes care of everything. Everything works by
+adding a few little lines of javascript to the bottom of your posts. Then either
+a bot sets up an issue automatically or you have to set one up by hand and link
+reference it manually. For now I'll just use the bot, since it seems to be quite
+convenient.
+
+Since it does probably not make any sense to update the client.js manually I'll
+just reference it here:
+#+BEGIN_SRC org
+,#+name: add_comments
+,#+BEGIN_SRC bash :exports none :output raw :results raw :cache no
+echo '#+BEGIN_EXPORT html'
+echo "
+<script src="https://utteranc.es/client.js"
+        repo="[ENTER REPO HERE]"
+        issue-term="pathname"
+        theme="github-light"
+        crossorigin="anonymous"
+        async>
+</script>
+"
+echo '#+END_EXPORT'
+,#+END_SRC
+
+,#+CALL: add_comments()
+#+END_SRC
+* Collections
+Template collections are used to combine atomic configuration set up in
+templates into configuration, which is used for groups of posts.
+
+For now template collections are also housed inside of the templates directory.
+** Default
+:properties:
+:header-args: :tangle ./templates/default.org :comments link :tangle-mode (identity #o440)
+:end:
+
+The default setup for all of the blog posts.
+#+BEGIN_SRC org
+#+OPTIONS: html-postamble:nil
+#+OPTIONS: toc:nil
+#+include: ./bootstrap.org
+#+include: ./syntax-highlighting.org
+#+END_SRC
+** Default Init
+:properties:
+:header-args: :tangle ./templates/default-init.org :comments link :tangle-mode (identity #o440)
+:end:
+This houses the default settings for the init page (which contains information
+about =oblivious= and on how to set up this site).
+#+BEGIN_SRC org
+#+OPTIONS: html-postamble:nil
+#+OPTIONS: toc:nil
+#+include: ./bootstrap.org
+#+include: ./monospace-title-font.org
+#+include: ./syntax-highlighting.org
+#+END_SRC
+
+* Signing your releases
+:properties:
+:header-args: :tangle ./bin/.release :comments link :tangle-mode (identity #o551)
+:end:
+I spent some time thinking about whether or not to sign the releases of these
+blog posts or not. There are a bunch of options when it comes to using gpg with
+your releases, e.g. using github, you can automatically sign your commits with a
+key belonging to your mailaddress. instead of signing commits, I decided to sign
+all files in the release using a gpg key, which I'll put into the about page.
+
+First a gpg key has to be created:
+#+BEGIN_EXAMPLE bash
+gpg --generate-full-key
+#+END_EXAMPLE
+
+Next note the secret key id:
+#+BEGIN_EXAMPLE bash
+sec   rsa4096/74344F2BCE39AA5D 2020-08-25 [SC]
+      48A1CC122B2B6E37FDA4B7B474344F2BCE39AA5D
+uid                 [ultimate] Oblivious Observer <oblivious@observer>
+ssb   rsa4096/2148A87445434332 2020-08-25 [E]
+#+END_EXAMPLE
+
+The public key can be exported using:
+#+BEGIN_EXAMPLE
+gpg --armor --output public-key.gpg --export oblivious@observer
+#+END_EXAMPLE
+
+And imported using:
+#+BEGIN_EXAMPLE
+gpg --import public-key.gpg
+#+END_EXAMPLE
+
+This ID can then be used in order to autosign all files from the public
+directory:
+#+BEGIN_SRC bash
+#!/usr/bin/env bash
+pwd
+
+for f in $(find -L public/ | grep '.sig$'); do
+    rm $f
+done
+
+./bin/oblivious build
+
+for f in $(find -L public/ | grep -v ".git"); do
+  if ! [ -d "$f" ]; then
+    gpg -u 48A1CC122B2B6E37FDA4B7B474344F2BCE39AA5D --output $f.sig --detach-sig $f
+  fi
+done
+#+END_SRC
+
+Verification of the files can be done like this:
+#+BEGIN_EXAMPLE bash
+gpg --verify path/to/index.html.sig path/to/index.html
+#+END_EXAMPLE
+
+A version of this sites public key can be found on the [[../about/][about]] page.
